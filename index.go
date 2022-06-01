@@ -1,6 +1,5 @@
 package main 
 import (
-	
 	"encoding/json"
     "log"
     "net/http"
@@ -18,7 +17,8 @@ type Person struct {
 	Lastname  string  `json:"lastname,omitempty"`
 	Address   *Address `json:"address,omitempty"`
 	Contact   string  `json:"contact,omitempty"`
-	AddUniqueContact  string  `json:"addUniqueContact,omitempty"`
+	AddUniqueContact  string  `json:"addUniqueContact"`
+	Contacts []Person `json:"contacts,omitempty"`
 }
 
 type Address struct {
@@ -26,11 +26,21 @@ type Address struct {
 	State  string `json:"state,omitempty"`
 }
 
+
+func Error (w http.ResponseWriter, error string, code int) {
+	w.WriteHeader(code)
+	w.Write([]byte(error))
+}
+
+
+
 var people []Person
 
-func getAllContacts(w http.ResponseWriter, r *http.Request) {
+
+func innerJoin (w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
 	db := start_database_connection()
-	rows, err := db.Query("SELECT * FROM contact")
+	rows, err := db.Query("SELECT contact.id, contact.firstname, contact.lastname, contact.contact, contact.address FROM contact INNER JOIN contact_group ON contact_group.contact_id = contact.id WHERE contact_group.group_id = '" + params["id"] + "'")
 	if err != nil {
 		panic(err.Error())
 	}
@@ -46,10 +56,39 @@ func getAllContacts(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			panic(err.Error())
 		}
-
 		contacts = append(contacts, Person{ID: id, Firstname: firstname, Lastname: lastname, Contact: contact, Address: &Address{City: address}})
 	}
 	json.NewEncoder(w).Encode(contacts)
+}
+
+
+func getAllContacts(w http.ResponseWriter, r *http.Request) {
+	db := start_database_connection()
+	rows, err := db.Query("SELECT * FROM contact ")
+	if err != nil {
+		panic(err.Error())
+	}
+	defer db.Close()
+	var contacts []Person
+	for rows.Next() {
+		var id string
+		var firstname string
+		var lastname string
+		var contact string
+		var address string
+		err = rows.Scan(&id, &firstname, &lastname, &contact, &address)
+		if err != nil {
+			panic(err.Error())
+		}
+				
+		contacts = append(contacts, Person{ID: id, Firstname: firstname, Lastname: lastname, Contact: contact, Address: &Address{City: address}})
+		
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(contacts)
+
 }
 func existIdInTable(db *sql.DB, id string) bool {
 	rows, err := db.Query("SELECT * FROM contact WHERE id = '" + id + "'")
@@ -83,7 +122,9 @@ func getContact(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query("SELECT * FROM contact WHERE id = '" + params["id"] + "'")
 	
 	if err != nil {
-		panic(err.Error())
+
+		Error(w, "Internal server Error", 500)
+		return
 	}
 	defer db.Close()
 	var contacts []Person
@@ -98,7 +139,8 @@ func getContact(w http.ResponseWriter, r *http.Request) {
 			panic(err.Error())
 		}
 
-		contacts = append(contacts, Person{ID: id, Firstname: firstname, Lastname: lastname, Contact: contact, Address: &Address{City: address}})
+
+		contacts = append(contacts, Person{ID: id, Firstname: firstname, Lastname: lastname, Contact: contact, Address: &Address{City: address} })
 	}
 	json.NewEncoder(w).Encode(contacts)
 }
@@ -125,7 +167,8 @@ func addUniqueContact(w http.ResponseWriter, r *http.Request) {
 	isExistStruct := existIdInTable(db, person.AddUniqueContact)
 				defer db.Close()
 				if !isExistParams || !isExistStruct {
-					panic("nenhum contato encontrado")
+					Error(w, "Contact not found", 404)
+					return
 				}
 				createRelation:= "INSERT INTO contact_group (group_id, contact_id) VALUES ('" + params["id"] + "', '" + person.AddUniqueContact + "')"
 				exec(db, createRelation)
@@ -150,8 +193,9 @@ func deleteContact(w http.ResponseWriter, r *http.Request) {
 }
 
 func start_database_connection () *sql.DB   {
-	db, err := sql.Open("mysql", "someName:somePassword@/someTable")
+	db, err := sql.Open("mysql", "root:123456789@/contacts")
 	if err != nil {
+		
 		panic(err.Error())
 	}
 	return db
@@ -162,6 +206,7 @@ func start_database_connection () *sql.DB   {
 func exec(db *sql.DB, sql string) sql.Result {
 	result, err := db.Exec(sql)
 	if err != nil {
+
 		log.Fatal(err)
 	}
 	return result
